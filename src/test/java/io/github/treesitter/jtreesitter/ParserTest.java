@@ -106,17 +106,34 @@ class ParserTest {
         assertEquals("LEX - done", messages.getLast());
     }
 
-    @SuppressWarnings("unused")
     @Test
-    @DisplayName("parse(callback)")
-    void parseCallback() {
+    @DisplayName("parse(callback_bit_by_bit)")
+    void parseCallbackBitByBit() {
         var source = "class Foo {}";
         // NOTE: can't use _ because of palantir/palantir-java-format#934
-        ParseCallback callback = (offset, p) -> source.substring(offset, Integer.min(offset, source.length()));
+        ParseCallback callback_bit_by_bit =
+                (offset, p) -> source.substring(offset, Integer.min(offset + 1, source.length()));
         parser.setLanguage(language);
-        try (var tree = parser.parse(callback, InputEncoding.UTF_8).orElseThrow()) {
+        try (var tree = parser.parse(callback_bit_by_bit, InputEncoding.UTF_8).orElseThrow()) {
             assertNull(tree.getText());
-            assertEquals("program", tree.getRootNode().getType());
+            assertEquals(
+                    "(program (class_declaration name: (identifier) body: (class_body)))",
+                    tree.getRootNode().toSexp());
+        }
+    }
+
+    @Test
+    @DisplayName("parse(callback_all_at_once)")
+    void parseCallbackAllAtOnce() {
+        var source = "class Foo {}";
+        // NOTE: can't use _ because of palantir/palantir-java-format#934
+        ParseCallback callback_all_at_once = (offset, p) -> source.substring(offset, source.length());
+        parser.setLanguage(language);
+        try (var tree = parser.parse(callback_all_at_once, InputEncoding.UTF_8).orElseThrow()) {
+            assertNull(tree.getText());
+            assertEquals(
+                    "(program (class_declaration name: (identifier) body: (class_body)))",
+                    tree.getRootNode().toSexp());
         }
     }
 
@@ -126,6 +143,27 @@ class ParserTest {
         assertThrows(IllegalStateException.class, () -> parser.parse(""));
         parser.setLanguage(language).setTimeoutMicros(2L);
         assertTrue(parser.parse("}".repeat(1024), InputEncoding.UTF_8).isEmpty());
+    }
+
+    @Test
+    @DisplayName("parse(timeout:callback_bit_by_bit)")
+    void parseCallbackBitByBitTimeout() {
+        var source = "class A {} ".repeat(1024);
+        // NOTE: can't use _ because of palantir/palantir-java-format#934
+        ParseCallback callback = (offset, p) ->
+                source.substring(offset, Integer.min(source.length(), offset + 1)); // does not read all at once
+        parser.setLanguage(language).setTimeoutMicros(2L);
+        assertTrue(parser.parse(callback, InputEncoding.UTF_8).isEmpty());
+    }
+
+    @Test
+    @DisplayName("parse(timeout:callback_all_at_once)")
+    void parseCallbackAllAtOnceTimeout() {
+        var source = "class A {} ".repeat(1024);
+        // NOTE: can't use _ because of palantir/palantir-java-format#934
+        ParseCallback callback = (offset, p) -> source.substring(offset, source.length());
+        parser.setLanguage(language).setTimeoutMicros(2L);
+        assertTrue(parser.parse(callback, InputEncoding.UTF_8).isEmpty());
     }
 
     @Test
@@ -144,6 +182,61 @@ class ParserTest {
                 }
             });
             var result = service.submit(() -> parser.parse("}".repeat(1024 * 1024)));
+            assertTrue(result.get(30L, TimeUnit.MILLISECONDS).isEmpty());
+        } catch (InterruptedException | CancellationException | ExecutionException | TimeoutException e) {
+            fail("Parsing was not halted gracefully", e);
+        }
+    }
+
+    @Test
+    @DisplayName("parse(cancellation:callback_all_at_once)")
+    void parseCancellationCallbackAllAtOnce() {
+        var flag = new Parser.CancellationFlag();
+        parser.setLanguage(language).setCancellationFlag(flag);
+
+        var source = "}".repeat(1024 * 1024);
+        // NOTE: can't use _ because of palantir/palantir-java-format#934
+        ParseCallback callback_all_at_once = (offset, p) -> source.substring(offset, source.length());
+
+        try (var service = Executors.newFixedThreadPool(2)) {
+            service.submit(() -> {
+                try {
+                    wait(10L);
+                } catch (InterruptedException e) {
+                    service.shutdownNow();
+                } finally {
+                    flag.set(1L);
+                }
+            });
+            var result = service.submit(() -> parser.parse(callback_all_at_once, InputEncoding.UTF_8));
+            assertTrue(result.get(30L, TimeUnit.MILLISECONDS).isEmpty());
+        } catch (InterruptedException | CancellationException | ExecutionException | TimeoutException e) {
+            fail("Parsing was not halted gracefully", e);
+        }
+    }
+
+    @Test
+    @DisplayName("parse(cancellation:callback_bit_by_bit)")
+    void parseCancellationCallbackBitByBit() {
+        var flag = new Parser.CancellationFlag();
+        parser.setLanguage(language).setCancellationFlag(flag);
+
+        var source = "}".repeat(1024 * 1024);
+        // NOTE: can't use _ because of palantir/palantir-java-format#934
+        ParseCallback callback_bit_by_bit =
+                (offset, p) -> source.substring(offset, Integer.min(offset + 1, source.length()));
+
+        try (var service = Executors.newFixedThreadPool(2)) {
+            service.submit(() -> {
+                try {
+                    wait(10L);
+                } catch (InterruptedException e) {
+                    service.shutdownNow();
+                } finally {
+                    flag.set(1L);
+                }
+            });
+            var result = service.submit(() -> parser.parse(callback_bit_by_bit, InputEncoding.UTF_8));
             assertTrue(result.get(30L, TimeUnit.MILLISECONDS).isEmpty());
         } catch (InterruptedException | CancellationException | ExecutionException | TimeoutException e) {
             fail("Parsing was not halted gracefully", e);

@@ -270,14 +270,12 @@ public final class Parser implements AutoCloseable {
      * @return An optional {@linkplain Tree} which is empty if parsing was halted.
      * @throws IllegalStateException If the parser does not have a language assigned.
      */
-    @SuppressWarnings("unused")
     public Optional<Tree> parse(ParseCallback callback, InputEncoding encoding, @Nullable Tree oldTree)
             throws IllegalStateException {
         if (language == null) {
             throw new IllegalStateException("The parser has no language assigned");
         }
 
-        // FIXME: callbacks cannot be cancelled
         var input = TSInput.allocate(arena);
         TSInput.payload(input, MemorySegment.NULL);
         TSInput.encoding(input, encoding.ordinal());
